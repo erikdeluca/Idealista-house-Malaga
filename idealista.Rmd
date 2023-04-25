@@ -1,35 +1,55 @@
 ---
-title: "Idealista_API"
-output: html_notebook
-Author: Antonio Martin-Cobos | Data Analytics Manager
+title: "Idealista: case in vendita a Malaga"
+author: "Erik De Luca"
+date: "2023-04-25"
+output:
+  html_document:
+    df_print: "paged"
+    code_folding: show
+    toc: true
+    theme: united
+    keep_md: true
+    toc_float: true
+    number_sections: true
 ---
 
 Librerias
 
 ```{r}
-if(!require("jsonlite")){install.packages("jsonlite")}
-if(!require("httr")){install.packages("httr")}
-if(!require("data.table")){install.packages("data.table")}
-if(!require("tidyverse")){install.packages("tidyverse")}
-if(!require("scales")){install.packages("scales")}
-if(!require("ggplot2")){install.packages("ggplot2")}
-library(leaflet)
-library(dplyr)
-library(MASS)
-library(ggplot2)
-library(RColorBrewer)
-library(reticulate)
-library(lime)
-library(e1071)  
-library(splines)
-library(tidyverse)
-library(data.table)
-library(tseries)
-library(mgcv)
-library(regclass)
-library(glmnet)
-library(coefplot)
-library(ggplot2)
+librerie = c(
+  "jsonlite",
+  "httr",
+  "data.table",
+  "scales",
+  "ggplot2",
+  "leaflet",
+  "dplyr",
+  "MASS",
+  "ggplot2",
+  "RColorBrewer",
+  "reticulate",
+  "lime",
+  "splines",
+  "tidyverse",
+  "data.table",
+  "tseries",
+  "mgcv",
+  "regclass",
+  "glmnet",
+  "coefplot"
+)
+
+Install_And_Load <- function(packages) {
+  k <- packages[!(packages %in% installed.packages()[,"Package"])];
+  if(length(k))
+  {install.packages(k, repos='https://cran.rstudio.com/');}
+
+  for(package_name in packages)
+  {library(package_name,character.only=TRUE, quietly = TRUE);}
+}
+
+Install_And_Load(librerie)
+
 ```
 Per accedere alle API di idealista necessitiamo di ottenere le credenziali. 
 Una volta ottenute le carichiamo in R.
@@ -110,7 +130,7 @@ Il problema emerge in quanto all'interno della lista sono presenti sotto liste e
 Allora bisogna creare una matrice che per ogni richiesta abbia il numero di colonne pari alla grandezza massima di variabili differenti per un'osservazione e successivamente riempita.
 Infine i dati vengono uniti ai dati delle richieste precedenti, aggiungendo le eventuali nuove colonne al database già esistente.
 
-```{r}
+```{r, eval = FALSE}
 pagina = 100
 
 for(z in 1:pagina)
@@ -194,6 +214,14 @@ for(z in 1:pagina)
 saveRDS(data, "dati idealista")
 ```
 
+Per evitare di fare ulteriori richieste al sito vengono  prelevati i dati già raccolti in precedenza e il codice precedente non viene eseguito.
+
+```{r}
+data = readRDS(file = "data/dati")
+```
+
+
+
 ## Pulizia dei dati
 
 Viene eseguita una pulizia dei dati grossolana, modificando principalmente il tipo di variabile.
@@ -214,6 +242,8 @@ data
 ```
 
 # Analisi esplorativa  dei dati
+
+## Grafici
 
 Istogramma del piano delle case nella quale si trovano.
 
@@ -281,6 +311,9 @@ ggplot(data %>% mutate(bathrooms = as.factor(bathrooms)),
   scale_x_discrete(breaks = pretty_breaks(max(data$bathrooms))) +
   scale_y_log10(labels = scales::unit_format(unit = "€"))
 ```
+
+## Mappa
+
 Mappa del prezzo delle case nelle diverse zone della città. 
 La mappa è interattiva, cliccando sui singoli pallini comparirà una box con ulteriori dati sulla casa.
 
@@ -305,6 +338,7 @@ leaflet() %>%
                    popup = ~ popup_info)
 ```
 
+## Correlogramma
 
 Correlogramma delle variabili più frequenti.
 
@@ -322,18 +356,4 @@ data %>%
                      number.cex = .6)
 ```
 
-
-```{r}
-modLasso = glmnet(makeX(data[, !names(data) %in% c("price","parkingSpace")] %>% 
-                          select_if(is.numeric) %>%
-                          na.roughfix()),
-                       data$price,
-                       alpha = 1)
-coefplot(modLasso,
-         intercept = F,
-         interactive = T,cex = 0.5,
-         coefficients = names(data[, !names(data) %in% c("price","parkingSpace")] %>% 
-                          select_if(is.numeric) %>%
-                          na.roughfix()))
-```
 
