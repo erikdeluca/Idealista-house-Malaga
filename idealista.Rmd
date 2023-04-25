@@ -1,0 +1,339 @@
+---
+title: "Idealista_API"
+output: html_notebook
+Author: Antonio Martin-Cobos | Data Analytics Manager
+---
+
+Librerias
+
+```{r}
+if(!require("jsonlite")){install.packages("jsonlite")}
+if(!require("httr")){install.packages("httr")}
+if(!require("data.table")){install.packages("data.table")}
+if(!require("tidyverse")){install.packages("tidyverse")}
+if(!require("scales")){install.packages("scales")}
+if(!require("ggplot2")){install.packages("ggplot2")}
+library(leaflet)
+library(dplyr)
+library(MASS)
+library(ggplot2)
+library(RColorBrewer)
+library(reticulate)
+library(lime)
+library(e1071)  
+library(splines)
+library(tidyverse)
+library(data.table)
+library(tseries)
+library(mgcv)
+library(regclass)
+library(glmnet)
+library(coefplot)
+library(ggplot2)
+```
+Per accedere alle API di idealista necessitiamo di ottenere le credenziali. 
+Una volta ottenute le carichiamo in R.
+Inoltre, prepariamo anche altri parametri necessari al collegamento con il sito.
+
+```{r}
+# parametri in input
+
+consumer_key <- "xop6jrf8yhw02a514zwhxrhlplvgn4ip"
+consumer_secret <- "upiSxn5JmYpy"
+
+# nuove credenziali
+
+consumer_key = "hpsdfxg76unhb6tgwe38qukjzacwyr3b"
+consumer_secret = "Ch7SVGGp4Vp4"
+
+#Use basic authentication
+secret <- jsonlite::base64_enc(paste(consumer_key, consumer_secret, sep = ":"))
+req <- httr::POST("https://api.idealista.com/oauth/token",
+                  httr::add_headers(
+                    #"Authorization" = paste("Basic", gsub("n", "", secret)),
+                    "Authorization" = paste("Basic", secret, sep = " "),
+                    "Content-Type" = "application/x-www-form-urlencoded;charset=utf-8"
+                  ),
+                  body = "grant_type=client_credentials"
+)
+
+token <- paste("Bearer", httr::content(req)$access_token)
+
+```
+
+Prepariamo i parametri in input che andranno a creare il link con la quale verrà eseguita la richiesta.
+Il nostro obiettivo è quello di scaricare tutti gli annunci delle case in vendita a Malaga.
+Come posizione è stata inserita la stazione Maria Zambrano ed  stata impostata una distanza massima di 10 km.
+Come dimensione minima del locale  è stato prefissato il valore di 30 per escludere eventuali annunci di garage.
+
+```{r}
+#url user parameters
+x = '36.71145256718129'
+y = '-4.4288958904720355'
+# x = '45.643170'
+# y = '13.790524'
+maxItems = '10000'
+distance = '10000'
+type = 'homes'
+op = 'sale'
+minprice = '30001'
+maxprice = '200000000'
+minsize = '30'
+maxsize = '10000'
+
+
+#url fixed parameters
+site = 'https://api.idealista.com/3.5/es/search?'
+# site = 'https://api.idealista.com/3.5/it/search?'
+loc = 'center='
+country = '&country=es'
+# country = '&country=it'
+maxitems = '&maxItems=50'
+pages = '&numPage='
+dist = '&distance='
+property = '&propertyType='
+operation = '&operation='
+pricefrom = '&minPrice='
+priceto = '&maxPrice='
+misize = '&minSize='
+masize = '&maxSize='
+chalet = '&chalet=0'
+
+```
+
+Ora  inoltreremo la richiesta di ricerca a idealista. 
+Abbiamo un limite mensile di massimo 100 richieste (`pagina = 100`), e di massimo una richiesta al secondo (`Sys.sleep(1)`).
+Nel ciclo a ogni giro viene generata una richiesta che differisce unicamente sul numero della pagina dei risultati, andando così a prelevare tutti i dati di una singola  ricerca.
+
+Una volta scaricati i dati ed estratti dal JSON otteremo delle liste che a sua volta  dovranno essere estratte e immagazzinate in un dataframe.
+Il problema emerge in quanto all'interno della lista sono presenti sotto liste e, oltretutto, non per ogni annuncio. 
+Allora bisogna creare una matrice che per ogni richiesta abbia il numero di colonne pari alla grandezza massima di variabili differenti per un'osservazione e successivamente riempita.
+Infine i dati vengono uniti ai dati delle richieste precedenti, aggiungendo le eventuali nuove colonne al database già esistente.
+
+```{r}
+pagina = 100
+
+for(z in 1:pagina)
+{
+  print(z)
+  
+  # prepara l'url
+  url <- paste(site, loc, x, ',', y, country, maxitems, pages, z, dist, distance,
+               property, type, operation, op, pricefrom, minprice, priceto, maxprice,
+               misize, minsize, masize, maxsize, sep = "")
+  
+  # invia la richiesta a idealista
+  res <- httr::POST(url, httr::add_headers("Authorization" = token))
+  
+  # estrai il contenuto dal JSON 
+  cont_raw <- httr::content(res) 
+  
+  
+  # Va a cercare l'item con più colonne
+  indexColMax = sapply(1:length(cont_raw[[1]]), function(x) cont_raw[[1]][[x]] %>% names() %>% length) %>% which.max
+  colNames = cont_raw[[1]][[indexColMax]] %>% names()
+  # Creo una matrice vuota dove imagazzinare i valori
+  m = matrix(NA, nrow = length(cont_raw[[1]]), ncol = length(colNames))
+  colnames(m) = colNames
+  for(r in 1:length(cont_raw[[1]]))
+  {
+    for(c in 1:length(cont_raw[[1]][[r]]))
+    {
+      # nel caso l'elemento della lista sia una sotto lista o df vado a spacchettarlo aggiungendo colonne
+      if(length(cont_raw[[1]][[r]][[c]])>1)
+      {
+        # non si può fare in un unico caso
+        for(i in 1:length(cont_raw[[1]][[r]][[c]]))
+        {
+          # se la colonna della sottolista non è già stata aggiunta lo faccio
+          if(is.null(names(cont_raw[[1]][[r]][[c]])))
+          {
+            cont_raw[[1]][[r]][[c]] = cont_raw[[1]][[r]][[c]][[1]] 
+          }
+          if(!names(cont_raw[[1]][[r]][[c]])[i] %in% colNames)
+          {
+            colNames = c(colNames, names(cont_raw[[1]][[r]][[c]])[i])
+            m = cbind(m, rep(NA,length(cont_raw[[1]]))) # aggiunta della colonna
+            colnames(m) = colNames
+          }
+        }
+        # inserisco i dati della sottolista
+        for(k in 1:length(cont_raw[[1]][[r]][[c]]))
+          m[r,names(cont_raw[[1]][[r]][[c]])[k]] = cont_raw[[1]][[r]][[c]][[k]]
+      }else{
+        tryCatch(
+          {
+            m[r,names(cont_raw[[1]][[r]][c])] = ifelse(length(cont_raw[[1]][[r]][[c]][[1]])>1,
+                                                       cont_raw[[1]][[r]][[c]][[1]][[1]],
+                                                       cont_raw[[1]][[r]][[c]][[1]])
+          },
+          error = function(e) print(e, z, r, c))
+      }
+    }
+  }
+  data = m %>% data.frame() %>% tibble()
+  
+  # debug
+  print(c(z,minprice,maxprice,data %>% dim))
+  
+  # merge database
+  if(z == 1)
+  {
+    d = data
+  }else
+  {
+    data[setdiff(names(d), names(data))] <- NA
+    d[setdiff(names(d), names(data))] <- NA
+    d = bind_rows(d, data)
+  }
+  
+  Sys.sleep(1)
+  
+}
+
+saveRDS(data, "dati idealista")
+```
+
+## Pulizia dei dati
+
+Viene eseguita una pulizia dei dati grossolana, modificando principalmente il tipo di variabile.
+
+```{r}
+data.frame(1:dim(data)[2],data %>% names)
+# pulizia dei dati
+data$floor[data$floor == "bj"] = 0
+
+indexNumeric = c(1,4,5,6,9,11,12,19,20,23,29,30,43)
+data = data %>% mutate_at(indexNumeric, as.numeric)
+indexFactor = c(7,8,14,15,16,17,18,26,31,39)
+data = data %>% mutate_at(indexFactor, as.factor)
+indexLogic = c(10,21,25,28,33:38,41,42)
+data = data %>% mutate_at(indexLogic, as.logical)
+
+data
+```
+
+# Analisi esplorativa  dei dati
+
+Istogramma del piano delle case nella quale si trovano.
+
+```{r}
+ggplot(data %>% subset(!is.na(floor)), aes(x = floor)) +
+  geom_histogram(bins = max(data$floor,na.rm = T)) +
+  scale_x_continuous(breaks = pretty_breaks(max(data$floor,na.rm = T)))
+```
+Grafico a barre del prezzo medio delle case in rapporto al piano nella quale si trovano.
+
+```{r}
+ggplot(data %>% 
+         subset(!is.na(floor)) %>% 
+         group_by(floor) %>% 
+         summarise(price = mean(price)),
+       aes(x = floor, y = price)) +
+  geom_col() +
+  scale_x_continuous(breaks = pretty_breaks(max(data$floor,na.rm = T)),,
+                     labels = scales::unit_format(unit = "€"))
+```
+
+Boxplot del prezzo medio delle case in funzione del piano nella quale si trovano. 
+
+```{r}
+ggplot(data %>% mutate(floor = as.factor(floor)) %>%  subset(!is.na(floor)),
+       aes(x = floor, y = price)) +
+  geom_boxplot() +
+  scale_y_log10(labels = scales::unit_format(unit = "€"))
+```
+
+Distribuzione della dimensione delle case.
+
+```{r}
+ggplot(data %>% subset(!is.na(size)), aes(x = size)) +
+  geom_histogram(bins = 100) +
+  scale_x_continuous(trans = log10_trans())
+```
+
+```{r}
+ggplot(data, aes(x = floor, y = price)) +
+  geom_point() +
+  geom_smooth(method = "gam",
+              formula = y ~ bs(x)) + 
+  scale_y_log10(labels = scales::unit_format(unit = "€")) + 
+  scale_x_continuous(n.breaks = max(data$floor,na.rm = T))
+```
+
+Prezzo delle case in funzione della loro dimensione. 
+Gli assi non sono proporzionali ma sono logaritmici.
+
+```{r}
+ggplot(data, aes(x = size, y = price)) +
+  geom_point() +
+  geom_smooth() + 
+  scale_x_log10() +
+  scale_y_log10(labels = scales::unit_format(unit = "€"))
+```
+
+Prezzo delle case in funzione al numero di bagni che la casa possiede.
+
+```{r}
+ggplot(data %>% mutate(bathrooms = as.factor(bathrooms)),
+       aes(x = bathrooms, y = price)) +
+  geom_boxplot() + 
+  scale_x_discrete(breaks = pretty_breaks(max(data$bathrooms))) +
+  scale_y_log10(labels = scales::unit_format(unit = "€"))
+```
+Mappa del prezzo delle case nelle diverse zone della città. 
+La mappa è interattiva, cliccando sui singoli pallini comparirà una box con ulteriori dati sulla casa.
+
+```{r}
+pal = with(data, colorFactor(brewer.pal(10,"RdYlGn"), -price))
+dfPopup = data %>% 
+  mutate(popup_info = paste("Prezzo della casa: ", price, " $", "</br>",
+                            "Superficie: ", size, "</br>", 
+                            "Piano: ", floor, "</br>", 
+                            "Numero di bagni: ", bathrooms, "</br>",
+                            "Numero di camere: ", rooms, "</br>",
+                            "Zona: ", neighborhood, "</br>",
+                            "Distanza: ", distance, "</br>"))
+leaflet() %>% 
+  addTiles() %>% 
+  addCircleMarkers(data = dfPopup,
+                   lat = ~ latitude,
+                   lng = ~ longitude,
+                   radius = ~ 2,
+                   opacity = .7,
+                   color = ~ pal(-price),
+                   popup = ~ popup_info)
+```
+
+
+Correlogramma delle variabili più frequenti.
+
+```{r}
+data %>% 
+  select_if(is.numeric) %>%
+  dplyr::select(!c(parkingSpace,distance,propertyCode,parkingSpace,subtitle)) %>% 
+  na.roughfix() %>%  
+  cor %>% 
+  corrplot::corrplot(method = "number",
+                     hclust.method = "ward.D2",
+                     diag = F,
+                     type = "upper",
+                     order = "hclust",
+                     number.cex = .6)
+```
+
+
+```{r}
+modLasso = glmnet(makeX(data[, !names(data) %in% c("price","parkingSpace")] %>% 
+                          select_if(is.numeric) %>%
+                          na.roughfix()),
+                       data$price,
+                       alpha = 1)
+coefplot(modLasso,
+         intercept = F,
+         interactive = T,cex = 0.5,
+         coefficients = names(data[, !names(data) %in% c("price","parkingSpace")] %>% 
+                          select_if(is.numeric) %>%
+                          na.roughfix()))
+```
+
