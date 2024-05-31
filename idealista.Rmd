@@ -15,7 +15,7 @@ output:
 
 Librerias
 
-```{r}
+```{r, warning=FALSE, message=FALSE}
 librerie = c(
   "jsonlite",
   "httr",
@@ -58,13 +58,13 @@ Inoltre, prepariamo anche altri parametri necessari al collegamento con il sito.
 ```{r}
 # parametri in input
 
-consumer_key <- "xop6jrf8yhw02a514zwhxrhlplvgn4ip"
-consumer_secret <- "upiSxn5JmYpy"
-
 # nuove credenziali
 
-consumer_key = "hpsdfxg76unhb6tgwe38qukjzacwyr3b"
-consumer_secret = "Ch7SVGGp4Vp4"
+consumer_key = load("consumer_key.rda")
+consumer_secret = load("consumer_secret.rda")
+# save(consumer_key, file = "consumer_key.rda")
+# save(consumer_secret, file = "consumer_secret.rda")
+
 
 #Use basic authentication
 secret <- jsonlite::base64_enc(paste(consumer_key, consumer_secret, sep = ":"))
