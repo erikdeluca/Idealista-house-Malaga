@@ -2,7 +2,7 @@
 .Rhistory
 .RData
 .Ruserdata
+consumer_secret.rda
 consumer_key.rda
-secret_key.rda
 .rda
 *.rda
